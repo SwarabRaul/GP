@@ -1,0 +1,143 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+class ContourEdgeDetector:
+    """
+    A class to perform Canny edge detection, contour detection, and bounding box drawing.
+    
+    Methods
+    -------
+    canny_edge_detection(image_path):
+        Applies Canny edge detection to an image.
+        
+    draw_bounding_boxes(image, contours):
+        Draws bounding boxes around each detected contour.
+        
+    draw_combined_bounding_box(image, contours):
+        Draws a combined bounding box around all contours.
+        
+    calculate_average_intensity(image, bounding_box):
+        Calculates the average intensity inside a bounding box.
+        
+    group_bounding_boxes_by_intensity(image, contours, intensity_threshold=20):
+        Groups bounding boxes based on intensity similarity.
+    """
+    
+    def canny_edge_detection(self, image_path):
+        """Applies Canny edge detection and returns the edges and contours."""
+        image = cv2.imread(image_path)
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        smoothed_image = cv2.GaussianBlur(gray_image, (5, 5), 1.4)
+        
+        # Canny edge detection
+        edges = cv2.Canny(smoothed_image, 50, 150)
+        
+        # Find contours
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        return edges, contours, image
+    
+    def draw_bounding_boxes(self, image, contours):
+        """Draws bounding boxes around each detected contour."""
+        output_image = image.copy()
+        
+        for contour in contours:
+            if len(contour) > 0:
+                x, y, w, h = cv2.boundingRect(contour)
+                cv2.rectangle(output_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        
+        return output_image
+
+    def draw_combined_bounding_box(self, image, contours):
+        """Draws a single bounding box that encloses all contours."""
+        if contours:
+            combined_contours = np.vstack(contours)
+            x, y, w, h = cv2.boundingRect(combined_contours)
+            
+            # Draw the bounding box
+            output_image = image.copy()
+            cv2.rectangle(output_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            return output_image
+        return image
+
+    def calculate_average_intensity(self, image, bounding_box):
+        """Calculates the average intensity inside a bounding box."""
+        x, y, w, h = bounding_box
+        roi = image[y:y + h, x:x + w]  # Region of interest
+        return cv2.mean(roi)[0]  # Mean intensity
+
+    def group_bounding_boxes_by_intensity(self, image, contours, intensity_threshold=20):
+        """Groups bounding boxes based on intensity similarity."""
+        bounding_boxes = [cv2.boundingRect(contour) for contour in contours]
+        groups = []
+        used = [False] * len(bounding_boxes)
+        
+        for i in range(len(bounding_boxes)):
+            if used[i]:
+                continue
+            group = [bounding_boxes[i]]
+            used[i] = True
+            
+            avg_intensity = self.calculate_average_intensity(image, bounding_boxes[i])
+            
+            for j in range(i + 1, len(bounding_boxes)):
+                if used[j]:
+                    continue
+                
+                current_intensity = self.calculate_average_intensity(image, bounding_boxes[j])
+                
+                # Group based on intensity threshold
+                if abs(avg_intensity - current_intensity) < intensity_threshold:
+                    group.append(bounding_boxes[j])
+                    used[j] = True
+            
+            groups.append(group)
+        
+        output_image = image.copy()
+        for group in groups:
+            if group:
+                x_min = min([x for (x, y, w, h) in group])
+                y_min = min([y for (x, y, w, h) in group])
+                x_max = max([x + w for (x, y, w, h) in group])
+                y_max = max([y + h for (x, y, w, h) in group])
+                
+                # Draw bounding box around the group
+                cv2.rectangle(output_image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+        
+        return output_image
+
+if __name__ == "__main__":
+    # Step 1: Create an instance of the ContourEdgeDetector class
+    edge_detector = ContourEdgeDetector()
+
+    # Step 2: Apply Canny edge detection and find contours
+    image_path = 'edge.jpg'  # Replace with your image path
+    edges, contours, original_image = edge_detector.canny_edge_detection(image_path)
+
+    # Step 3: Visualize the edges
+    plt.imshow(edges, cmap='gray')
+    plt.title('Canny Edges')
+    plt.axis('off')
+    plt.show()
+
+    # Step 4: Draw bounding boxes around each contour
+    bbox_image = edge_detector.draw_bounding_boxes(original_image, contours)
+    plt.imshow(cv2.cvtColor(bbox_image, cv2.COLOR_BGR2RGB))
+    plt.title('Bounding Boxes Around Each Contour')
+    plt.axis('off')
+    plt.show()
+
+    # Step 5: Draw a single combined bounding box around all contours
+    combined_bbox_image = edge_detector.draw_combined_bounding_box(original_image, contours)
+    plt.imshow(cv2.cvtColor(combined_bbox_image, cv2.COLOR_BGR2RGB))
+    plt.title('Combined Bounding Box')
+    plt.axis('off')
+    plt.show()
+
+    # Step 6: Group bounding boxes by intensity and display the result
+    grouped_bbox_image = edge_detector.group_bounding_boxes_by_intensity(original_image, contours)
+    plt.imshow(cv2.cvtColor(grouped_bbox_image, cv2.COLOR_BGR2RGB))
+    plt.title('Grouped Bounding Boxes by Intensity')
+    plt.axis('off')
+    plt.show()

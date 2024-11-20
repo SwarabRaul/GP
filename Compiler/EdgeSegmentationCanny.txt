@@ -1,0 +1,157 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+
+class EdgeSegmentation:
+    """
+    A class to perform edge detection using the Sobel operator, non-maximum suppression,
+    double thresholding, edge tracking, and region growing on an image.
+
+    Methods
+    -------
+    compute_gradients(image):
+        Computes the gradient magnitude and direction using Sobel filters.
+
+    non_maximum_suppression(gradient_magnitude, gradient_direction):
+        Suppresses non-maximum edges to thin the edges in the image.
+
+    double_threshold(thin_edges, low_threshold, high_threshold):
+        Applies double thresholding to classify edges as strong or weak.
+
+    edge_tracking_by_hysteresis(strong_edges, weak_edges):
+        Performs edge tracking by hysteresis to finalize edge detection.
+
+    region_growing(x, y, region, visited, edges):
+        Grows a region from a starting point using edge information.
+
+    process_image(image_path):
+        Main method that combines all processing steps to return final edges and regions.
+
+    visualize_regions(image, regions):
+        Visualizes the regions by assigning random colors to each region.
+
+    draw_bounding_boxes(image, regions):
+        Draws bounding boxes around detected regions in the image.
+    """
+
+    def compute_gradients(self, image):
+        """Computes gradients using Sobel filters."""
+        sobel_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+        gradient_magnitude = np.hypot(sobel_x, sobel_y)
+        gradient_magnitude = (gradient_magnitude / gradient_magnitude.max() * 255).astype(np.uint8)
+        gradient_direction = np.arctan2(sobel_y, sobel_x)
+        return gradient_magnitude, gradient_direction
+
+    def non_maximum_suppression(self, gradient_magnitude, gradient_direction):
+        """Performs non-maximum suppression to thin edges."""
+        height, width = gradient_magnitude.shape
+        suppressed = np.zeros_like(gradient_magnitude, dtype=np.uint8)
+
+        for y in range(1, height - 1):
+            for x in range(1, width - 1):
+                angle = gradient_direction[y, x] * 180 / np.pi
+                angle = angle + 180 if angle < 0 else angle
+
+                # Determine the neighbors to compare
+                q, r = 255, 255
+
+                if (0 <= angle < 22.5) or (157.5 <= angle <= 180):
+                    q = gradient_magnitude[y, x + 1]
+                    r = gradient_magnitude[y, x - 1]
+                elif 22.5 <= angle < 67.5:
+                    q = gradient_magnitude[y + 1, x - 1]
+                    r = gradient_magnitude[y - 1, x + 1]
+                elif 67.5 <= angle < 112.5:
+                    q = gradient_magnitude[y + 1, x]
+                    r = gradient_magnitude[y - 1, x]
+                elif 112.5 <= angle < 157.5:
+                    q = gradient_magnitude[y - 1, x - 1]
+                    r = gradient_magnitude[y + 1, x + 1]
+
+                # Suppress non-maxima
+                if gradient_magnitude[y, x] >= q and gradient_magnitude[y, x] >= r:
+                    suppressed[y, x] = gradient_magnitude[y, x]
+
+        return suppressed
+
+    def double_threshold(self, thin_edges, low_threshold, high_threshold):
+        """Applies double thresholding to classify strong and weak edges."""
+        strong_edges = (thin_edges >= high_threshold) * 255
+        weak_edges = ((thin_edges >= low_threshold) & (thin_edges < high_threshold)) * 255
+        return strong_edges, weak_edges
+
+    def edge_tracking_by_hysteresis(self, strong_edges, weak_edges):
+        """Performs edge tracking by hysteresis to link weak edges to strong ones."""
+        edges = np.zeros_like(strong_edges)
+        strong_y, strong_x = np.where(strong_edges == 255)
+
+        for y, x in zip(strong_y, strong_x):
+            edges[y, x] = 255
+            for dy in [-1, 0, 1]:
+                for dx in [-1, 0, 1]:
+                    if (0 <= y + dy < strong_edges.shape[0] and
+                        0 <= x + dx < strong_edges.shape[1] and
+                        weak_edges[y + dy, x + dx] == 255):
+                        edges[y + dy, x + dx] = 255
+
+        return edges
+
+    def region_growing(self, x, y, region, visited, edges):
+        """Grows regions from a starting point based on edge connectivity."""
+        visited[y, x] = True
+        region.append((x, y))
+
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if (0 <= nx < edges.shape[1] and 0 <= ny < edges.shape[0] and
+                    edges[ny, nx] == 255 and not visited[ny, nx]):
+                    self.region_growing(nx, ny, region, visited, edges)
+
+    def process_image(self, image_path):
+        """Main method to process the image and detect edges and regions."""
+        image = cv2.imread(image_path)
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        smoothed_image = cv2.GaussianBlur(gray_image, (5, 5), 1.4)
+
+        # Compute gradients and edges
+        gradient_magnitude, gradient_direction = self.compute_gradients(smoothed_image)
+        thin_edges = self.non_maximum_suppression(gradient_magnitude, gradient_direction)
+        strong_edges, weak_edges = self.double_threshold(thin_edges, 50, 150)
+        final_edges = self.edge_tracking_by_hysteresis(strong_edges, weak_edges)
+
+        # Perform region growing
+        regions = []
+        visited = np.zeros(gray_image.shape, dtype=bool)
+        for y in range(final_edges.shape[0]):
+            for x in range(final_edges.shape[1]):
+                if final_edges[y, x] == 255 and not visited[y, x]:
+                    region = []
+                    self.region_growing(x, y, region, visited, final_edges)
+                    regions.append(region)
+
+        return final_edges, regions
+
+    def visualize_regions(self, image, regions):
+        """Visualizes regions by assigning random colors to each region."""
+        output_image = np.zeros_like(image)
+        for region in regions:
+            color = [random.randint(0, 255) for _ in range(3)]
+            for (x, y) in region:
+                output_image[y, x] = color
+        return output_image
+
+    def draw_bounding_boxes(self, image, regions):
+        """Draws bounding boxes around detected regions in the image."""
+        output_image = image.copy()
+        for region in regions:
+            if region:
+                xs, ys = zip(*region)
+                x_min, x_max = min(xs), max(xs)
+                y_min, y_max = min(ys), max(ys)
+                cv2.rectangle(output_image, (x_min, y_min), (x_max, y_max), (255, 255, 255), 2)
+        return output_image
